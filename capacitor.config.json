@@ -1,0 +1,10 @@
+{
+  "appId": "com.queenstar.admin",
+  "appName": "Queen Star Admin",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "android": { "allowMixedContent": true, "backgroundColor": "#0F0D0B" },
+  "plugins": {
+    "SplashScreen": { "launchShowDuration": 1500, "backgroundColor": "#C9952A", "showSpinner": false }
+  }
+}
