@@ -15,6 +15,18 @@ const GREEN = '#2E9B5C';
 const RED   = '#C24E4E';
 const BLUE  = '#3E76A8';
 
+// Normalizes a customer/thread name into a stable grouping key (trim, collapse spaces, case-insensitive)
+const chatKey = (s) => (s||'').toString().trim().replace(/\s+/g,' ').toLowerCase();
+
+// Normalizes a chat 'time' value (ISO string, epoch number, or Firestore Timestamp) to epoch ms
+const chatTime = (t) => {
+  if (!t) return 0;
+  if (typeof t.toDate === 'function') return t.toDate().getTime();
+  if (typeof t === 'number') return t;
+  const d = new Date(t);
+  return isNaN(d) ? 0 : d.getTime();
+};
+
 const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n||0));
 const nowStr = () => new Date().toISOString();
 const todayStr = () => new Date().toISOString().slice(0,10);
@@ -624,20 +636,25 @@ function Chat({ addToast }) {
     setTimeout(()=>bottomRef.current?.scrollIntoView({behavior:'smooth'}),100);
   },[messages, active]);
 
-  // Group messages by customer (threadId = customer name)
+  // Group messages by customer. Grouping key is normalized (trimmed/case-insensitive) so
+  // the same customer never splits into multiple threads over whitespace/case differences.
   const threads = {};
   messages.forEach(m=>{
-    const key = m.from==='admin' ? (m.threadId||'admin') : (m.name||'Анонимный');
-    if(!threads[key]) threads[key]={name:key, msgs:[], lastTime:m.time, unread:0};
+    const key = m.from==='admin' ? (chatKey(m.threadId)||'admin') : (chatKey(m.name)||'анонимный');
+    if(!threads[key]) threads[key]={key, display:m.name||'Анонимный', msgs:[], lastTime:0, unread:0};
     threads[key].msgs.push(m);
-    if(m.time > threads[key].lastTime) threads[key].lastTime = m.time;
+    if(m.from!=='admin' && chatTime(m.time) >= threads[key].lastTime) threads[key].display = m.name||'Анонимный';
+    if(chatTime(m.time) > threads[key].lastTime) threads[key].lastTime = chatTime(m.time);
     if(m.from!=='admin' && !m.read) threads[key].unread++;
   });
 
   // Build thread list sorted by last message time
   const threadList = Object.values(threads)
-    .filter(t=>t.name!=='admin')
-    .sort((a,b)=>b.lastTime.localeCompare(a.lastTime));
+    .filter(t=>t.key!=='admin')
+    .sort((a,b)=>b.lastTime-a.lastTime);
+
+  const activeThread = threadList.find(t=>t.key===active);
+  const activeDisplay = activeThread?.display || active || '';
 
   const send = async () => {
     const text = reply.trim();
@@ -646,7 +663,7 @@ function Chat({ addToast }) {
     try {
       await addDoc(collection(db,'consultant_chat'),{
         from:'admin', name:'Queen Star', threadId:active,
-        text, time:new Date().toLocaleString("sv-SE").replace(" ","T"), read:true
+        text, time:Date.now(), read:true
       });
     } catch(e){ setReply(text); addToast('Ошибка: '+e.message, RED); }
   };
@@ -654,21 +671,22 @@ function Chat({ addToast }) {
   if(active){
     // Show all messages in this thread (from customer + admin replies to this customer)
     const threadMsgs = messages.filter(m=>
-      (m.from!=='admin' && m.name===active) ||
-      (m.from==='admin' && m.threadId===active)
-    ).sort((a,b)=>a.time.localeCompare(b.time));
+      (m.from!=='admin' && chatKey(m.name)===active) ||
+      (m.from==='admin' && chatKey(m.threadId)===active)
+    ).sort((a,b)=>chatTime(a.time)-chatTime(b.time));
 
     return(
       <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:BG, display:'flex', flexDirection:'column', overflow:'hidden', zIndex:60 }}>
         <div style={{ background:CARD, borderBottom:`1px solid ${LINE}`, padding:'13px 16px', display:'flex', alignItems:'center', gap:12, flexShrink:0 }}>
           <button onClick={()=>setActive(null)} style={{ background:'none', border:'none', color:GOLD, fontSize:20, cursor:'pointer' }}>←</button>
-          <div style={{ width:36, height:36, borderRadius:'50%', background:GOLD, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontWeight:700 }}>{active[0]?.toUpperCase()}</div>
+          <div style={{ width:36, height:36, borderRadius:'50%', background:GOLD, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontWeight:700 }}>{activeDisplay[0]?.toUpperCase()}</div>
           <div>
-            <div style={{ fontSize:15, fontWeight:700, color:INK }}>{active}</div>
+            <div style={{ fontSize:15, fontWeight:700, color:INK }}>{activeDisplay}</div>
             <div style={{ fontSize:11, color:MUTED }}>{(()=>{
-                const lm=messages.filter(m=>m.name===active&&m.from!=='admin').slice(-1)[0];
+                const custMsgs=messages.filter(m=>chatKey(m.name)===active&&m.from!=='admin');
+                const lm=custMsgs.reduce((a,b)=>(!a||chatTime(b.time)>chatTime(a.time))?b:a, null);
                 if(!lm) return 'нет сообщений';
-                const mins=Math.round((Date.now()-new Date(lm.time))/60000);
+                const mins=Math.round((Date.now()-chatTime(lm.time))/60000);
                 if(mins<2) return '● только что';
                 if(mins<60) return `● ${mins} мин. назад`;
                 return `● ${Math.round(mins/60)} ч. назад`;
@@ -682,7 +700,7 @@ function Chat({ addToast }) {
               <div style={{ maxWidth:'80%', background:m.from==='admin'?GOLD:CARD2, color:'#fff', borderRadius:m.from==='admin'?'14px 4px 14px 14px':'4px 14px 14px 14px', padding:'10px 13px', fontSize:13 }}>
                 {m.text}
                 <div style={{ fontSize:9, opacity:0.7, marginTop:4 }}>
-                  {new Date(m.time).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
+                  {new Date(chatTime(m.time)).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
                   {m.from==='admin'&&' · Вы'}
                 </div>
               </div>
@@ -694,7 +712,7 @@ function Chat({ addToast }) {
           <input style={{ ...S.input, flex:1, padding:'11px 13px' }}
             value={reply} onChange={e=>setReply(e.target.value)}
             onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){e.preventDefault();send();}}}
-            placeholder={`Написать ${active}...`}/>
+            placeholder={`Написать ${activeDisplay}...`}/>
           <button style={{ ...S.btn(reply.trim()?GOLD:MUTED), width:'auto', padding:'11px 20px' }} onClick={send} disabled={!reply.trim()}>➤</button>
         </div>
       </div>
@@ -712,21 +730,21 @@ function Chat({ addToast }) {
         Сообщений от покупателей пока нет
       </div>}
       {threadList.map(t=>{
-        const last = t.msgs[t.msgs.length-1];
+        const last = t.msgs.reduce((a,b)=>(!a||chatTime(b.time)>chatTime(a.time))?b:a, null);
         return(
-          <div key={t.name} onClick={()=>setActive(t.name)}
+          <div key={t.key} onClick={()=>setActive(t.key)}
             style={{ ...S.card, padding:14, marginBottom:9, display:'flex', alignItems:'center', gap:12, cursor:'pointer', ...(t.unread>0?{borderColor:RED+'55'}:{}) }}>
             <div style={{ width:44, height:44, borderRadius:'50%', background:t.unread>0?RED:CARD2, display:'flex', alignItems:'center', justifyContent:'center', fontSize:t.unread>0?14:18, color:'#fff', fontWeight:700, flexShrink:0 }}>
-              {t.unread>0?t.unread:t.name[0]?.toUpperCase()}
+              {t.unread>0?t.unread:t.display[0]?.toUpperCase()}
             </div>
             <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:14, fontWeight:t.unread>0?700:500, color:INK }}>{t.name}</div>
+              <div style={{ fontSize:14, fontWeight:t.unread>0?700:500, color:INK }}>{t.display}</div>
               <div style={{ fontSize:12, color:MUTED, marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                 {last?.from==='admin'?'Вы: ':''}{last?.text}
               </div>
             </div>
             <div style={{ fontSize:10, color:MUTED, flexShrink:0 }}>
-              {last&&new Date(last.time).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
+              {last&&new Date(chatTime(last.time)).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
             </div>
           </div>
         );
