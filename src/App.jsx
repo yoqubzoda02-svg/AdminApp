@@ -659,7 +659,7 @@ function Chat({ addToast }) {
     ).sort((a,b)=>a.time.localeCompare(b.time));
 
     return(
-      <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:BG, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+      <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:BG, display:'flex', flexDirection:'column', overflow:'hidden', zIndex:60 }}>
         <div style={{ background:CARD, borderBottom:`1px solid ${LINE}`, padding:'13px 16px', display:'flex', alignItems:'center', gap:12, flexShrink:0 }}>
           <button onClick={()=>setActive(null)} style={{ background:'none', border:'none', color:GOLD, fontSize:20, cursor:'pointer' }}>←</button>
           <div style={{ width:36, height:36, borderRadius:'50%', background:GOLD, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontWeight:700 }}>{active[0]?.toUpperCase()}</div>
