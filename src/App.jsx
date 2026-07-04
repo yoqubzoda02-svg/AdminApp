@@ -348,6 +348,7 @@ function Products({ products, addToast }) {
   const [view, setView]     = useState('list'); // list | add | edit
   const [f, setF]           = useState(EMPTY_PRODUCT);
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const set = (k, v) => setF(prev=>({...prev, [k]:v}));
 
@@ -357,7 +358,8 @@ function Products({ products, addToast }) {
     const photosObj = pSnap.exists() ? JSON.parse(pSnap.data().v||'{}') : {};
     const ph = photosObj[product.id];
     const photoArr = Array.isArray(ph) ? ph : ph ? [ph] : [];
-    setF({ ...EMPTY_PRODUCT, ...product, price:String(product.price||''), cost:String(product.cost||''), qty:String(product.qty||''), photos:photoArr, sizes:product.sizes||{}, description:product.description||'', delivery:product.delivery||'1-2 дня', color:product.color||'', material:product.material||'', videoUrl:product.videoUrl||'' });
+    setF({ ...EMPTY_PRODUCT, ...product, price:String(product.price||''), cost:String(product.cost||''), qty:String(product.qty||''), photos:photoArr, sizes:product.sizes||{}, description:product.description||'', delivery:product.delivery||'1-2 дня', color:product.color||'', material:product.material||'', videoUrl:product.videoUrl||'', _editingId:product.id });
+    setConfirmDelete(false);
     setView('edit');
   };
 
@@ -386,21 +388,49 @@ function Products({ products, addToast }) {
         brand: f.brand||'Queen Star',
         videoUrl: f.videoUrl,
       };
-      const idx = list.findIndex(p=>p.id===newProd.id);
+      // When editing, always match the record we actually opened (f._editingId) rather
+      // than re-deriving it from the (possibly retyped/renamed) SKU field — otherwise a
+      // product whose stored id wasn't already trim+uppercase normalized, or whose SKU
+      // the user tweaked, would fail to match and get pushed as a brand new duplicate
+      // while the original stayed behind untouched.
+      const matchId = f._editingId || newProd.id;
+      const idx = list.findIndex(p=>p.id===matchId);
       if(idx>=0) list[idx]={...list[idx],...newProd};
       else list.push(newProd);
       await setDoc(doc(db,'qs','products'),{v:JSON.stringify(list),ts:Date.now()},{merge:true});
 
       // 2. Save photos
-      if(f.photos.length>0){
-        const phSnap = await getDoc(doc(db,'qs','photos'));
-        const photosObj = phSnap.exists() ? JSON.parse(phSnap.data().v||'{}') : {};
-        photosObj[newProd.id] = f.photos.length===1 ? f.photos[0] : f.photos;
-        await setDoc(doc(db,'qs','photos'),{v:JSON.stringify(photosObj),ts:Date.now()},{merge:true});
-      }
+      const phSnap = await getDoc(doc(db,'qs','photos'));
+      const photosObj = phSnap.exists() ? JSON.parse(phSnap.data().v||'{}') : {};
+      if(f.photos.length>0) photosObj[newProd.id] = f.photos.length===1 ? f.photos[0] : f.photos;
+      if(f._editingId && f._editingId!==newProd.id) delete photosObj[f._editingId];
+      await setDoc(doc(db,'qs','photos'),{v:JSON.stringify(photosObj),ts:Date.now()},{merge:true});
 
       addToast('✅ Товар сохранён на сайте!', GREEN);
       setF(EMPTY_PRODUCT);
+      setView('list');
+    } catch(e){ addToast('Ошибка: '+e.message, RED); }
+    setSaving(false);
+  };
+
+  const deleteProduct = async () => {
+    setSaving(true);
+    try {
+      const pSnap = await getDoc(doc(db,'qs','products'));
+      const list = pSnap.exists() ? JSON.parse(pSnap.data().v) : [];
+      const next = list.filter(p=>p.id!==f._editingId);
+      await setDoc(doc(db,'qs','products'),{v:JSON.stringify(next),ts:Date.now()},{merge:true});
+
+      const phSnap = await getDoc(doc(db,'qs','photos'));
+      if(phSnap.exists()){
+        const photosObj = JSON.parse(phSnap.data().v||'{}');
+        delete photosObj[f._editingId];
+        await setDoc(doc(db,'qs','photos'),{v:JSON.stringify(photosObj),ts:Date.now()},{merge:true});
+      }
+
+      addToast('🗑 Товар удалён', RED);
+      setF(EMPTY_PRODUCT);
+      setConfirmDelete(false);
       setView('list');
     } catch(e){ addToast('Ошибка: '+e.message, RED); }
     setSaving(false);
@@ -536,6 +566,12 @@ function Products({ products, addToast }) {
       <button style={{ ...S.btn(), ...(saving?{opacity:0.7}:{}) }} onClick={save} disabled={saving}>
         {saving?'Сохраняем...':'💾 Сохранить товар на сайте'}
       </button>
+
+      {view==='edit' && (
+        <button style={{ ...S.btn(RED), marginTop:10, ...(saving?{opacity:0.7}:{}) }} onClick={()=>confirmDelete?deleteProduct():setConfirmDelete(true)} disabled={saving}>
+          {saving?'Удаляем...':confirmDelete?'⚠ Нажмите ещё раз для подтверждения':'🗑 Удалить товар'}
+        </button>
+      )}
     </div>
   );
 }
