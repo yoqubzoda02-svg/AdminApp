@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { db } from './firebase.js';
-import { collection, onSnapshot, query, orderBy, doc, updateDoc, addDoc, setDoc, getDoc, getDocs, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, doc, updateDoc, addDoc, setDoc, getDoc, getDocs, where, deleteField } from 'firebase/firestore';
 
 // ── THEME ─────────────────────────────────────────────────────
 const BG    = '#0F0D0B';
@@ -578,18 +578,27 @@ function Products({ products, addToast }) {
 
 
 // ── CUSTOMERS ─────────────────────────────────────────────────
-function Customers({ customers, orders }) {
+function Customers({ customers, orders, addToast }) {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const filtered = customers.filter(c=>!search||c.name?.toLowerCase().includes(search.toLowerCase())||c.phone?.includes(search));
+
+  const resetPin = async (customer) => {
+    try {
+      await updateDoc(doc(db,'shop_customers',customer.id), { pin: deleteField() });
+      addToast?.('🔓 PIN сброшен — клиент придумает новый при следующем входе', GREEN);
+      setConfirmReset(false);
+    } catch(e) { addToast?.('Ошибка: '+e.message, RED); }
+  };
 
   if(selected){
     const custOrders = orders.filter(o=>o.customerPhone===selected.phone||o.customerId===selected.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
     const spent = custOrders.filter(o=>o.status==='done').reduce((s,o)=>s+o.total,0);
     return (
       <div style={{ padding:'14px 14px 80px' }}>
-        <button onClick={()=>setSelected(null)} style={{ background:'none', border:'none', color:GOLD, fontSize:14, cursor:'pointer', marginBottom:14, fontFamily:'inherit', fontWeight:600 }}>← Назад</button>
+        <button onClick={()=>{setSelected(null);setConfirmReset(false);}} style={{ background:'none', border:'none', color:GOLD, fontSize:14, cursor:'pointer', marginBottom:14, fontFamily:'inherit', fontWeight:600 }}>← Назад</button>
         <div style={{ ...S.card, padding:16, marginBottom:14 }}>
           <div style={{ width:48, height:48, borderRadius:'50%', background:`linear-gradient(135deg,${GOLD},${GOLDD})`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, color:'#fff', fontWeight:700, marginBottom:10 }}>{selected.name?.[0]?.toUpperCase()||'?'}</div>
           <div style={{ fontSize:18, fontWeight:700, color:INK }}>{selected.name}</div>
@@ -610,6 +619,11 @@ function Customers({ customers, orders }) {
           </div>
           <a href={`tel:${selected.phone}`} style={{ ...S.btn(GREEN), display:'block', textDecoration:'none', textAlign:'center', marginTop:14 }}>📞 Позвонить</a>
           <a href={`https://wa.me/${(selected.phone||'').replace(/\D/g,'')}`} target="_blank" style={{ ...S.btn(CARD2), display:'block', textDecoration:'none', textAlign:'center', marginTop:8, color:INK }}>💬 WhatsApp</a>
+          {selected.pin && (
+            <button onClick={()=>confirmReset?resetPin(selected):setConfirmReset(true)} style={{ ...S.btn(RED), marginTop:8 }}>
+              {confirmReset?'⚠ Нажмите ещё раз для подтверждения':'🔓 Сбросить PIN (клиент забыл)'}
+            </button>
+          )}
         </div>
         <div style={{ fontSize:12, color:MUTED, fontWeight:700, marginBottom:10 }}>ИСТОРИЯ ЗАКАЗОВ</div>
         {custOrders.map(o=>(
@@ -975,7 +989,7 @@ export default function AdminApp() {
         {tab==='dash'     && <Dashboard orders={orders} customers={customers} products={products}/>}
         {tab==='orders'   && <Orders orders={orders} addToast={addToast}/>}
         {tab==='products' && <Products products={products} addToast={addToast}/>}
-        {tab==='customers'&& <Customers customers={customers} orders={orders}/>}
+        {tab==='customers'&& <Customers customers={customers} orders={orders} addToast={addToast}/>}
         {tab==='chat'     && <Chat addToast={addToast}/>}
         {tab==='settings' && <Settings addToast={addToast}/>}
       </div>
