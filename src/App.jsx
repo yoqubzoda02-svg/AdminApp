@@ -268,21 +268,41 @@ const EMPTY_PRODUCT = {
   sizes:{}, videoUrl:'', photos:[]
 };
 
+// Photos are stored as base64 inside one shared Firestore document (qs/photos),
+// which has a hard 1MiB limit — uncompressed phone photos fill that up after only
+// a handful of products. Resize + re-encode as JPEG before storing so the shared
+// document stays small regardless of how many products/photos get added.
+function compressImage(file, maxSize=800, quality=0.55) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxSize) { height = Math.round(height * maxSize/width); width = maxSize; }
+        else if (height > maxSize) { width = Math.round(width * maxSize/height); height = maxSize; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function ImageUploader({ photos, onChange }) {
   const fileRef = useRef(null);
   const [loading, setLoading] = useState(false);
 
   const addPhotos = (files) => {
     setLoading(true);
-    const readers = Array.from(files).slice(0, 10 - photos.length).map(file =>
-      new Promise(res=>{
-        const r = new FileReader();
-        r.onload = e => res(e.target.result);
-        r.readAsDataURL(file);
-      })
-    );
+    const readers = Array.from(files).slice(0, 10 - photos.length).map(file => compressImage(file).catch(()=>null));
     Promise.all(readers).then(results=>{
-      onChange([...photos, ...results].slice(0,10));
+      onChange([...photos, ...results.filter(Boolean)].slice(0,10));
       setLoading(false);
     });
   };
